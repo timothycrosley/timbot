@@ -17,6 +17,7 @@ dependencies = [
     "pyaudio>=0.2.11",
     "opencv-python>=4.8.0",
     "ollama>=0.1.0",
+    "sounddevice>=0.5.2",
 ]
 
 [build-system]
