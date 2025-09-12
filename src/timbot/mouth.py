@@ -2,7 +2,6 @@ from piper import PiperVoice
 import sounddevice as sd
 import numpy as np
 import threading
-import time
 
 # Specify the path to your downloaded model and config files
 model_path = "models/en_US-lessac-medium.onnx"
