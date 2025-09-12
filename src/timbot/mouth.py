@@ -13,6 +13,7 @@ voice = PiperVoice.load(model_path, config_path)
 # Global state for managing speech queue
 _current_speech_thread = None
 _speech_lock = threading.Lock()
+_is_speaking = False
 
 
 def say(text: str, force_immediate: bool = False):
@@ -25,8 +26,10 @@ def say(text: str, force_immediate: bool = False):
     global _current_speech_thread
     
     def _play_audio():
+        global _is_speaking
         current_thread = threading.current_thread()
         try:
+            _is_speaking = True
             audio_chunks = voice.synthesize(text)
             sample_rate = voice.config.sample_rate
             
@@ -46,6 +49,8 @@ def say(text: str, force_immediate: bool = False):
             if not getattr(current_thread, '_stop_requested', False):
                 print(f"Audio error: {e}")
             # Don't re-raise, just exit gracefully
+        finally:
+            _is_speaking = False
     
     with _speech_lock:
         # Handle existing speech
@@ -54,6 +59,7 @@ def say(text: str, force_immediate: bool = False):
                 # Just mark it to stop, don't call sd.stop()
                 _current_speech_thread._stop_requested = True
                 _current_speech_thread.join(timeout=0.5)  # Brief wait
+                _is_speaking = False  # Reset speaking state when interrupted
             else:
                 # Wait for current speech to finish
                 _current_speech_thread.join()
@@ -63,3 +69,9 @@ def say(text: str, force_immediate: bool = False):
         _current_speech_thread.start()
     
     return _current_speech_thread
+
+
+def is_speaking():
+    """Check if the robot is currently speaking."""
+    global _is_speaking
+    return _is_speaking

@@ -19,7 +19,7 @@ Timbot is a multimodal AI assistant that communicates through voice, vision, and
 - **Piper TTS**: Voice synthesis (en_US-lessac-medium model)
 - **OpenCV**: Camera capture and image processing
 - **sounddevice**: Real-time audio I/O
-- **Faster Whisper**: Speech-to-text transcription (base model)
+- **Vosk**: Speech-to-text transcription (small en-us model for speed)
 - Models are downloaded on-demand to `/models` directory
 
 ## Common Development Commands
@@ -42,13 +42,14 @@ ruff check src/  # Code linting
 ## Development Notes
 
 - Models directory (`/models`) contains downloaded AI models and is gitignored except for README.md
-- Audio files are temporarily stored in `/tmp/` and automatically cleaned up
 - Screenshots are taken every 10 seconds and stored in a circular buffer (max 4)
 - The system requires Ollama to be installed and running for brain functionality
-- Audio processing uses 44.1kHz sample rate with int16 format
-- Speech input is transcribed to text using Whisper before being sent to the brain
+- Audio processing uses 16kHz sample rate with int16 format (optimized for Vosk)
+- Speech input is transcribed to text using Vosk before being sent to the brain
 - All input (typed and spoken) is unified as text when processed by the brain
 - Image capture is downscaled to 320x240 for performance
+- Robot won't transcribe speech while it's currently speaking to prevent audio feedback
+- Filler words ("Hmm", "Let me think") are spoken while waiting for LLM responses
 
 ## System Dependencies
 

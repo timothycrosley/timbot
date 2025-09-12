@@ -1,6 +1,7 @@
 import typer
 import asyncio
 import subprocess
+import os
 from async_downloader import AsyncFileDownloader
 
 app = typer.Typer()
@@ -91,6 +92,10 @@ async def _download_models_async():
             "url": "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
             "filepath": "models/en_US-lessac-medium.onnx.json",
         },
+        {
+            "url": "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip",
+            "filepath": "models/vosk-model-en-us-0.22.zip",
+        },
     ]
 
     downloader = AsyncFileDownloader(max_concurrent=3)
@@ -99,6 +104,22 @@ async def _download_models_async():
     for url, success in results.items():
         status = "✓" if success else "✗"
         print(f"{status} {url}")
+    
+    # Extract Vosk model if downloaded successfully
+    vosk_zip_path = "models/vosk-model-en-us-0.22.zip"
+    vosk_model_dir = "models/vosk-model-en-us-0.22"
+    
+    if os.path.exists(vosk_zip_path) and not os.path.exists(vosk_model_dir):
+        print("Extracting Vosk model...")
+        try:
+            import zipfile
+            with zipfile.ZipFile(vosk_zip_path, 'r') as zip_ref:
+                zip_ref.extractall("models/")
+            print("✓ Vosk model extracted")
+            # Clean up zip file
+            os.remove(vosk_zip_path)
+        except Exception as e:
+            print(f"✗ Failed to extract Vosk model: {e}")
     
     # Setup Ollama and Gemma after downloading other models
     print("\nSetting up LLM components...")
@@ -177,11 +198,10 @@ async def _handle_audio_input():
     
     try:
         async for transcribed_text in ears.listen(
-            min_sound_duration=0.5,
-            sound_threshold=1000,  # Will be auto-adapted
-            silence_timeout=1.2,
-            max_recording_duration=6.0,
-            debug=False
+            min_sound_duration=0.3,  # Shorter minimum duration
+            silence_timeout=1.5,  # Silence timeout before ending
+            energy_threshold=0.002,  # VAD energy threshold
+            debug=True  # Enable debug output
         ):
             print(f"🗣️ Speech transcribed: {transcribed_text}")
             # Add to processing queue as text (handled by _process_multimodal_communication)
@@ -298,15 +318,26 @@ async def _process_input_buffer(input_buffer):
         print(f"   - Images: {len(image_paths)} screenshots")
         print(f"   - Text: {combined_text}")
         
-        response = await brain.communicate(
-            audio_path=None,  # No longer using audio files
-            image_paths=image_paths,
-            text_input=combined_text,
-            context={
-                "input_count": len(input_buffer),
-                "timestamp": asyncio.get_event_loop().time()
-            }
-        )
+        # Start filler words task while LLM is thinking
+        filler_task = asyncio.create_task(_say_filler_words())
+        
+        try:
+            response = await brain.communicate(
+                audio_path=None,  # No longer using audio files
+                image_paths=image_paths,
+                text_input=combined_text,
+                context={
+                    "input_count": len(input_buffer),
+                    "timestamp": asyncio.get_event_loop().time()
+                }
+            )
+        finally:
+            # Cancel filler words when response is ready
+            filler_task.cancel()
+            try:
+                await filler_task
+            except asyncio.CancelledError:
+                pass
         
         print(f"🤖 Timbot: {response}")
         
@@ -321,6 +352,45 @@ async def _process_input_buffer(input_buffer):
         error_response = "Sorry, I'm having trouble processing that right now."
         print(f"🤖 Timbot: {error_response}")
         mouth.say(error_response)
+
+
+async def _say_filler_words():
+    """Say filler words while waiting for LLM response."""
+    from timbot import mouth
+    import random
+    
+    filler_words = [
+        "Hmm",
+        "Let me think about that",
+        "Mmm", 
+        "One moment",
+        "Uh huh",
+        "Let me see",
+        "Well",
+        "OK",
+        "Right"
+    ]
+    
+    # Wait a bit before starting filler words
+    await asyncio.sleep(2.0)
+    
+    while True:
+        try:
+            # Say a random filler word
+            filler = random.choice(filler_words)
+            print(f"🤔 Filler: {filler}")
+            mouth.say(filler, force_immediate=False)  # Don't interrupt ongoing speech
+            
+            # Wait before next filler word (3-5 seconds)
+            wait_time = random.uniform(3.0, 5.0)
+            await asyncio.sleep(wait_time)
+            
+        except asyncio.CancelledError:
+            print("Filler words cancelled")
+            break
+        except Exception as e:
+            print(f"Filler words error: {e}")
+            break
 
 
 @app.command()
