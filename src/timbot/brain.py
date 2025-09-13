@@ -16,6 +16,10 @@ except ImportError:
 # Model state
 _model_loaded = False
 
+# Conversation memory
+_conversation_history = []
+_max_history_length = 20  # Keep last 20 exchanges
+
 # Model configuration
 MODEL_NAME = "gemma3n"
 MODEL_PATH = "models/"
@@ -29,6 +33,8 @@ Key traits:
 - You have a playful personality but are always helpful and informative
 - When you receive audio, video, or multimodal input, acknowledge what you perceive
 - You should give short answers, 1 sentance when possible, and avoid use of emoticons, as your text will be converted to speech.
+- You remember previous conversations in this session, so you can refer back to earlier topics
+- You don't give meta information about yourself or what you are doing unless specifically asked.
 
 Remember: You are speaking to the user live, so respond as if you're having a real-time conversation."""
 
@@ -88,6 +94,37 @@ def _encode_image_for_vision(image_path: str) -> str:
             return base64.b64encode(img_file.read()).decode("utf-8")
     except Exception:
         return ""
+
+
+def _add_to_conversation_history(role: str, content: str):
+    """Add a message to conversation history."""
+    global _conversation_history, _max_history_length
+
+    _conversation_history.append({"role": role, "content": content})
+
+    # Keep only the most recent exchanges
+    if len(_conversation_history) > _max_history_length:
+        _conversation_history = _conversation_history[-_max_history_length:]
+
+
+def _get_conversation_messages(user_message: dict) -> list:
+    """Get full conversation including history and current message."""
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    # Add conversation history
+    messages.extend(_conversation_history)
+
+    # Add current user message
+    messages.append(user_message)
+
+    return messages
+
+
+def clear_conversation_history():
+    """Clear the conversation history."""
+    global _conversation_history
+    _conversation_history = []
+    print("🧠 Conversation memory cleared")
 
 
 async def communicate(
@@ -185,11 +222,14 @@ async def communicate(
         if images_base64:
             user_message["images"] = images_base64
 
+        # Get conversation messages including history
+        messages = _get_conversation_messages(user_message)
+
         # Make request to local LLM
         response = await asyncio.to_thread(
             ollama.chat,
             model=MODEL_NAME,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, user_message],
+            messages=messages,
             options={
                 "temperature": 0.7,
                 "top_p": 0.9,
@@ -197,7 +237,13 @@ async def communicate(
             },
         )
 
-        return response["message"]["content"].strip()
+        response_content = response["message"]["content"].strip()
+
+        # Add both user message and assistant response to conversation history
+        _add_to_conversation_history("user", full_message)
+        _add_to_conversation_history("assistant", response_content)
+
+        return response_content
 
     except Exception as e:
         print(f"Error communicating with LLM: {e}")
@@ -323,11 +369,14 @@ async def communicate_stream(
         if images_base64:
             user_message["images"] = images_base64
 
+        # Get conversation messages including history
+        messages = _get_conversation_messages(user_message)
+
         # Stream response from local LLM
         response_stream = await asyncio.to_thread(
             ollama.chat,
             model=MODEL_NAME,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, user_message],
+            messages=messages,
             options={
                 "temperature": 0.7,
                 "top_p": 0.9,
@@ -336,12 +385,20 @@ async def communicate_stream(
             stream=True,  # Enable streaming
         )
 
+        # Collect full response for history
+        full_response = ""
+
         # Stream the response chunks
         for chunk in response_stream:
             if "message" in chunk and "content" in chunk["message"]:
                 content = chunk["message"]["content"]
                 if content.strip():  # Only yield non-empty content
+                    full_response += content
                     yield content
+
+        # Add both user message and assistant response to conversation history
+        _add_to_conversation_history("user", full_message)
+        _add_to_conversation_history("assistant", full_response.strip())
 
     except Exception as e:
         print(f"Error communicating with LLM: {e}")

@@ -225,7 +225,7 @@ async def _handle_text_input():
     while True:
         try:
             # Non-blocking input simulation
-            print("\n💬 Type a message (or 'quit' to exit):")
+            print("\n💬 Type a message (or 'quit' to exit, 'clear' to clear memory):")
 
             # Use asyncio to make input non-blocking
             text = await asyncio.get_event_loop().run_in_executor(None, input, "> ")
@@ -233,6 +233,11 @@ async def _handle_text_input():
             if text.lower().strip() in ["quit", "exit", "stop"]:
                 print("Goodbye!")
                 break
+            elif text.lower().strip() in ["clear", "clear memory"]:
+                from timbot import brain
+
+                brain.clear_conversation_history()
+                continue
 
             if text.strip():
                 print(f"📝 Text input: {text}")
@@ -436,6 +441,14 @@ def download_models():
 def start():
     """Starts timbot in interactive mode."""
     asyncio.run(_start_interactive())
+
+
+@app.command()
+def clear_memory():
+    """Clears timbot's conversation memory."""
+    from timbot import brain
+
+    brain.clear_conversation_history()
 
 
 if __name__ == "__main__":
