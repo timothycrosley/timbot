@@ -3,20 +3,23 @@ import threading
 import time
 import tempfile
 import os
-from typing import List, Optional
+from typing import List, Optional, Tuple
+import mss  # For desktop screenshots
 
 # Configuration
-SCREENSHOT_INTERVAL = 10.0  # Take screenshot every 10 seconds
+SCREENSHOT_INTERVAL = 2.0  # Take screenshot every 2 seconds
 SCREENSHOT_WIDTH = 320  # Low resolution for faster processing
 SCREENSHOT_HEIGHT = 240
 IMAGE_FORMAT = ".jpg"
 JPEG_QUALITY = 70  # Lower quality for smaller files
-IMAGE_FILENAME = "view_from_your_eyes_looking_at_user.jpg"
+WEBCAM_FILENAME = "view_from_your_eyes_looking_at_user.jpg"
+DESKTOP_FILENAME = "view_of_your_desktop_screen.jpg"
 
 # Global state
 _capture = None
 _screenshot_thread = None
-_current_screenshot = None  # Single current screenshot path
+_current_webcam_screenshot = None  # Current webcam screenshot path
+_current_desktop_screenshot = None  # Current desktop screenshot path
 _screenshot_lock = threading.Lock()
 _watching = False
 
@@ -44,56 +47,108 @@ def _get_webcam_capture():
     raise RuntimeError("No working webcam found")
 
 
-def _create_screenshot_path() -> str:
-    """Create the fixed image file path."""
+def _create_webcam_screenshot_path() -> str:
+    """Create the webcam image file path."""
     temp_dir = tempfile.gettempdir()
-    return os.path.join(temp_dir, IMAGE_FILENAME)
+    return os.path.join(temp_dir, WEBCAM_FILENAME)
+
+def _create_desktop_screenshot_path() -> str:
+    """Create the desktop image file path."""
+    temp_dir = tempfile.gettempdir()
+    return os.path.join(temp_dir, DESKTOP_FILENAME)
+
+def _capture_desktop_screenshot() -> Optional[str]:
+    """Capture desktop screenshot and return file path."""
+    try:
+        with mss.mss() as sct:
+            # Capture the primary monitor
+            monitor = sct.monitors[1]  # monitors[0] is all monitors combined, [1] is primary
+            screenshot = sct.grab(monitor)
+            
+            # Convert to numpy array and then to OpenCV format
+            import numpy as np
+            img_array = np.array(screenshot)
+            # Convert BGRA to BGR (remove alpha channel)
+            img_bgr = cv2.cvtColor(img_array, cv2.COLOR_BGRA2BGR)
+            
+            # Resize to low resolution for faster processing
+            img_resized = cv2.resize(img_bgr, (SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT))
+            
+            # Create screenshot file path
+            screenshot_path = _create_desktop_screenshot_path()
+            
+            # Save as JPEG with compression
+            success = cv2.imwrite(
+                screenshot_path,
+                img_resized,
+                [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY],
+            )
+            
+            if success:
+                return screenshot_path
+            else:
+                print("Failed to save desktop screenshot")
+                return None
+                
+    except Exception as e:
+        print(f"Error capturing desktop screenshot: {e}")
+        return None
 
 
 def _screenshot_worker():
-    """Background worker thread for taking periodic screenshots."""
-    global _capture, _watching, _current_screenshot
+    """Background worker thread for taking periodic screenshots from both webcam and desktop."""
+    global _capture, _watching, _current_webcam_screenshot, _current_desktop_screenshot
 
     try:
         _capture = _get_webcam_capture()
         print(
-            f"Taking screenshots every {SCREENSHOT_INTERVAL}s at {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}"
+            f"Taking webcam and desktop screenshots every {SCREENSHOT_INTERVAL}s at {SCREENSHOT_WIDTH}x{SCREENSHOT_HEIGHT}"
         )
 
         while _watching:
             try:
+                webcam_success = False
+                desktop_success = False
+                
+                # Capture webcam screenshot
                 ret, frame = _capture.read()
-                if not ret:
-                    print("Failed to capture frame, retrying...")
-                    time.sleep(1.0)  # Short wait before retry
-                    continue
+                if ret and frame is not None and frame.size > 0:
+                    # Resize to low resolution
+                    frame_resized = cv2.resize(frame, (SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT))
 
-                # Validate frame dimensions
-                if frame is None or frame.size == 0:
-                    print("Invalid frame received, skipping...")
+                    # Create webcam screenshot file path
+                    webcam_path = _create_webcam_screenshot_path()
+
+                    # Save as JPEG with compression
+                    webcam_success = cv2.imwrite(
+                        webcam_path,
+                        frame_resized,
+                        [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY],
+                    )
+                    
+                    if webcam_success:
+                        with _screenshot_lock:
+                            _current_webcam_screenshot = webcam_path
+                        print(f"📸 Webcam screenshot saved: {webcam_path}")
+                    else:
+                        print("Failed to save webcam screenshot")
+                else:
+                    print("Failed to capture webcam frame, skipping...")
+
+                # Capture desktop screenshot
+                desktop_path = _capture_desktop_screenshot()
+                if desktop_path:
+                    with _screenshot_lock:
+                        _current_desktop_screenshot = desktop_path
+                    print(f"🖥️ Desktop screenshot saved: {desktop_path}")
+                    desktop_success = True
+                else:
+                    print("Failed to capture desktop screenshot")
+
+                if not webcam_success and not desktop_success:
+                    print("Both screenshot captures failed, retrying...")
                     time.sleep(1.0)
                     continue
-
-                # Resize to low resolution
-                frame_resized = cv2.resize(frame, (SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT))
-
-                # Create screenshot file path
-                screenshot_path = _create_screenshot_path()
-
-                # Save as JPEG with compression
-                success = cv2.imwrite(
-                    screenshot_path,
-                    frame_resized,
-                    [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY],
-                )
-
-                if success:
-                    # Update current screenshot (thread-safe)
-                    with _screenshot_lock:
-                        _current_screenshot = screenshot_path
-                        print(f"📸 Screenshot saved: {screenshot_path}")
-                else:
-                    print("Failed to save screenshot")
 
                 # Wait for next screenshot
                 time.sleep(SCREENSHOT_INTERVAL)
@@ -101,6 +156,10 @@ def _screenshot_worker():
             except cv2.error as e:
                 print(f"OpenCV error during capture: {e}")
                 time.sleep(2.0)  # Wait before retry
+                continue
+            except Exception as e:
+                print(f"Screenshot capture error: {e}")
+                time.sleep(2.0)
                 continue
 
         # Cleanup
@@ -140,7 +199,7 @@ def start_watching():
 
 def stop_watching():
     """Stop taking screenshots."""
-    global _watching, _current_screenshot
+    global _watching, _current_webcam_screenshot, _current_desktop_screenshot
 
     if not _watching:
         return
@@ -152,47 +211,80 @@ def stop_watching():
     if _screenshot_thread:
         _screenshot_thread.join(timeout=5.0)
 
-    # Cleanup current screenshot
+    # Cleanup current screenshots
     with _screenshot_lock:
-        if _current_screenshot and os.path.exists(_current_screenshot):
+        if _current_webcam_screenshot and os.path.exists(_current_webcam_screenshot):
             try:
-                os.unlink(_current_screenshot)
-                _current_screenshot = None
+                os.unlink(_current_webcam_screenshot)
+                _current_webcam_screenshot = None
+            except OSError:
+                pass
+        
+        if _current_desktop_screenshot and os.path.exists(_current_desktop_screenshot):
+            try:
+                os.unlink(_current_desktop_screenshot)
+                _current_desktop_screenshot = None
             except OSError:
                 pass
 
 
 def get_recent_screenshots(_count: Optional[int] = None) -> List[str]:
     """
-    Get the current screenshot.
+    Get all current screenshots (webcam and desktop combined).
 
     Args:
         _count: Ignored - kept for compatibility
 
     Returns:
-        List containing current screenshot file path, or empty list if none available
+        List containing current screenshot file paths, or empty list if none available
+    """
+    screenshots = []
+    with _screenshot_lock:
+        if _current_webcam_screenshot and os.path.exists(_current_webcam_screenshot):
+            screenshots.append(_current_webcam_screenshot)
+        if _current_desktop_screenshot and os.path.exists(_current_desktop_screenshot):
+            screenshots.append(_current_desktop_screenshot)
+    return screenshots
+
+def get_webcam_and_desktop_screenshots() -> Tuple[Optional[str], Optional[str]]:
+    """
+    Get current webcam and desktop screenshots separately.
+    
+    Returns:
+        Tuple of (webcam_path, desktop_path) where each can be None if not available
     """
     with _screenshot_lock:
-        if _current_screenshot and os.path.exists(_current_screenshot):
-            return [_current_screenshot]
-        return []
-
+        webcam_path = _current_webcam_screenshot if _current_webcam_screenshot and os.path.exists(_current_webcam_screenshot) else None
+        desktop_path = _current_desktop_screenshot if _current_desktop_screenshot and os.path.exists(_current_desktop_screenshot) else None
+        return (webcam_path, desktop_path)
 
 def get_latest_screenshot() -> Optional[str]:
-    """Get the current screenshot."""
-    screenshots = get_recent_screenshots()
-    return screenshots[0] if screenshots else None
+    """Get the current webcam screenshot (for backward compatibility)."""
+    with _screenshot_lock:
+        if _current_webcam_screenshot and os.path.exists(_current_webcam_screenshot):
+            return _current_webcam_screenshot
+    return None
 
+def get_latest_desktop_screenshot() -> Optional[str]:
+    """Get the current desktop screenshot."""
+    with _screenshot_lock:
+        if _current_desktop_screenshot and os.path.exists(_current_desktop_screenshot):
+            return _current_desktop_screenshot
+    return None
 
 def is_watching() -> bool:
     """Check if screenshot capture is active."""
     return _watching
 
-
 def get_screenshot_count() -> int:
     """Get current number of stored screenshots."""
     with _screenshot_lock:
-        return 1 if _current_screenshot and os.path.exists(_current_screenshot) else 0
+        count = 0
+        if _current_webcam_screenshot and os.path.exists(_current_webcam_screenshot):
+            count += 1
+        if _current_desktop_screenshot and os.path.exists(_current_desktop_screenshot):
+            count += 1
+        return count
 
 
 # Convenience functions for compatibility

@@ -93,6 +93,8 @@ def _encode_image_for_vision(image_path: str) -> str:
 async def communicate(
     audio_path: Optional[str] = None,
     image_paths: Optional[list] = None,
+    webcam_image_path: Optional[str] = None,
+    desktop_image_path: Optional[str] = None,
     text_input: Optional[str] = None,
     context: Optional[Dict[str, Any]] = None,
 ) -> str:
@@ -101,7 +103,9 @@ async def communicate(
 
     Args:
         audio_path: Path to audio file (WAV format)
-        image_paths: List of paths to screenshot images (JPG format)
+        image_paths: List of paths to screenshot images (JPG format) - for backward compatibility
+        webcam_image_path: Path to webcam image (JPG format)
+        desktop_image_path: Path to desktop screenshot (JPG format)
         text_input: Text message from user
         context: Additional context for the conversation
 
@@ -128,7 +132,7 @@ async def communicate(
         audio_desc = _audio_to_text_description(audio_path)
         message_parts.append(audio_desc)
 
-    # Encode images as base64 if provided
+    # Handle backward compatibility with image_paths
     if image_paths and len(image_paths) > 0:
         for image_path in image_paths:
             if os.path.exists(image_path):
@@ -136,9 +140,25 @@ async def communicate(
                 if encoded_image:
                     images_base64.append(encoded_image)
 
+    # Handle webcam image separately
+    if webcam_image_path and os.path.exists(webcam_image_path):
+        encoded_image = _encode_image_for_vision(webcam_image_path)
+        if encoded_image:
+            images_base64.append(encoded_image)
+            message_parts.append("[Visual input from webcam: Current view of user/environment through your camera]")
+
+    # Handle desktop image separately  
+    if desktop_image_path and os.path.exists(desktop_image_path):
+        encoded_image = _encode_image_for_vision(desktop_image_path)
+        if encoded_image:
+            images_base64.append(encoded_image)
+            message_parts.append("[Visual input from desktop: Current view of user's computer screen/desktop]")
+
+    # Legacy handling for image_paths (when new parameters not provided)
+    if image_paths and len(image_paths) > 0 and not webcam_image_path and not desktop_image_path:
         if images_base64:
             message_parts.append(
-                f"[Visual input: {len(images_base64)} screenshot(s) from your camera]"
+                f"[Visual input: {len(images_base64)} screenshot(s)]"
             )
         else:
             message_parts.append("[Visual input: Unable to process images]")
@@ -209,6 +229,8 @@ async def initialize_brain():
 async def communicate_stream(
     audio_path: Optional[str] = None,
     image_paths: Optional[list] = None,
+    webcam_image_path: Optional[str] = None,
+    desktop_image_path: Optional[str] = None,
     text_input: Optional[str] = None,
     context: Optional[Dict[str, Any]] = None,
 ):
@@ -216,7 +238,9 @@ async def communicate_stream(
 
     Args:
         audio_path: Path to audio file (WAV format)
-        image_paths: List of paths to screenshot images (JPG format)
+        image_paths: List of paths to screenshot images (JPG format) - for backward compatibility
+        webcam_image_path: Path to webcam image (JPG format)
+        desktop_image_path: Path to desktop screenshot (JPG format)
         text_input: Text message from user
         context: Additional context for the conversation
 
@@ -245,7 +269,7 @@ async def communicate_stream(
         audio_desc = _audio_to_text_description(audio_path)
         message_parts.append(audio_desc)
 
-    # Encode images as base64 if provided
+    # Handle backward compatibility with image_paths
     if image_paths and len(image_paths) > 0:
         for image_path in image_paths:
             if os.path.exists(image_path):
@@ -253,9 +277,25 @@ async def communicate_stream(
                 if encoded_image:
                     images_base64.append(encoded_image)
 
+    # Handle webcam image separately
+    if webcam_image_path and os.path.exists(webcam_image_path):
+        encoded_image = _encode_image_for_vision(webcam_image_path)
+        if encoded_image:
+            images_base64.append(encoded_image)
+            message_parts.append("[Visual input from webcam: Current view of user/environment through your camera]")
+
+    # Handle desktop image separately  
+    if desktop_image_path and os.path.exists(desktop_image_path):
+        encoded_image = _encode_image_for_vision(desktop_image_path)
+        if encoded_image:
+            images_base64.append(encoded_image)
+            message_parts.append("[Visual input from desktop: Current view of user's computer screen/desktop]")
+
+    # Legacy handling for image_paths (when new parameters not provided)
+    if image_paths and len(image_paths) > 0 and not webcam_image_path and not desktop_image_path:
         if images_base64:
             message_parts.append(
-                f"[Visual input: {len(images_base64)} screenshot(s) from your camera]"
+                f"[Visual input: {len(images_base64)} screenshot(s)]"
             )
         else:
             message_parts.append("[Visual input: Unable to process images]")

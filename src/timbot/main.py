@@ -321,13 +321,14 @@ async def _process_input_buffer(input_buffer):
     # Combine all text inputs
     combined_text = " ".join(text_inputs) if text_inputs else None
 
-    # Get current screenshots
-    image_paths = eyes.get_recent_screenshots()
+    # Get current webcam and desktop screenshots separately
+    webcam_path, desktop_path = eyes.get_webcam_and_desktop_screenshots()
 
     # Generate streaming response using brain
     try:
         print("🧠 Calling brain.communicate_stream with:")
-        print(f"   - Images: {len(image_paths)} screenshots")
+        print(f"   - Webcam: {'Yes' if webcam_path else 'No'}")
+        print(f"   - Desktop: {'Yes' if desktop_path else 'No'}")
         print(f"   - Text: {combined_text}")
 
         # Start streaming speech processor
@@ -341,7 +342,8 @@ async def _process_input_buffer(input_buffer):
         try:
             async for chunk in brain.communicate_stream(
                 audio_path=None,  # No longer using audio files
-                image_paths=image_paths,
+                webcam_image_path=webcam_path,
+                desktop_image_path=desktop_path,
                 text_input=combined_text,
                 context={
                     "input_count": len(input_buffer),
